@@ -1,0 +1,95 @@
+
+AWSTemplateFormatVersion: 2010-09-09
+Description: >-
+  Sample of Custom Resource with Lambda function.
+Parameters:
+  FunctionName:
+    Description: The name of the lambda that contains your packaged source
+    Type: String
+    Default: lambdafunction
+  S3Bucket:
+    Description: The name of the bucket 
+    Type: String
+    Default: test
+Resources:	
+  LambdaExecutionRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - "sts:AssumeRole"
+      Path: /
+      Policies:
+        - PolicyName: root
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "logs:CreateLogGroup"
+                  - "logs:CreateLogStream"
+                  - "logs:PutLogEvents"
+                Resource: "arn:aws:logs:*:*:*"
+              - Effect: Allow
+                Action:
+                  - "ssm:GetParameters"
+				  - "ssm:GetParameter"				           
+                Resource: "arn:aws:ssm:*:*:parameter/*"
+              - Effect: Allow
+                Action:
+                  - "s3:PutObject"			           
+                Resource: !Sub "arn:aws:s3:::${S3Bucket}/*"
+  LambdaFunction2:
+	Type: AWS::Lambda::Function
+	Properties:
+	  FunctionName: !Ref FunctionName
+	  Code:
+		ZipFile: |
+	  
+		  import boto3, json, csv
+		  
+		  import cfnresponse
+
+		  def handler(event, context):
+			  print('EVENT:[{}]'.format(event))
+			  client = boto3.client('ssm')
+			  clients3 = boto3.client('s3')
+			  
+			  parameter = client.get_parameter(Name='UserName')
+			  print(parameter['Parameter']['Value'])
+			  res_csv_list = ['UserName', parameter['Parameter']['Value']]
+			  
+			  # csv Header
+			  fieldnames = ['secret_name','secret_value']
+			  
+			  with open('/tmp/userinfo.csv', 'w', encoding='UTF8', newline='') as f:
+			    writer = csv.writer(f)
+				writer.writerow(fieldnames)
+				writer.writerow(res_csv_list)
+				
+			  response = clients3.upload_file('/tmp/userinfo.csv', !Sub '${S3Bucket}, 'userinfo.csv')
+
+			  responseValue = 200
+			  responseData = {}
+			  responseData['Data'] = responseValue
+			  cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData)
+			  
+	  Handler: index.handler
+	  Role: !GetAtt
+		- LambdaExecutionRole
+		- Arn
+	  Runtime: python3.7
+	  Timeout: 60
+
+  Primerinvoke:
+    Type: AWS::CloudFormation::CustomResource
+    DependsOn: LambdaFunction2
+    Version: "1.0"
+    Properties:
+	  ServiceToken: !GetAtt LambdaFunction2.Arn
